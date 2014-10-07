@@ -11,7 +11,7 @@ import (
 	"bytes"
 	"code.google.com/p/go.crypto/salsa20"
 	"code.google.com/p/go.crypto/scrypt"
-	"code.google.com/p/go.crypto/sha3"
+	"github.com/keybase/go-triplesec/sha3"
 	"code.google.com/p/go.crypto/twofish"
 	"crypto/aes"
 	"crypto/cipher"
