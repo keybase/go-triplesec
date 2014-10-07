@@ -22,7 +22,7 @@ import (
 	"fmt"
 )
 
-const SaltSize = 16
+const SaltLen = 16
 
 type Cipher struct {
 	passphrase []byte
@@ -33,17 +33,25 @@ type Cipher struct {
 // A Cipher is an instance of TripleSec using a particular key and
 // a particular salt
 func NewCipher(passphrase []byte, salt []byte) (*Cipher, error) {
-	if salt != nil && len(salt) != SaltSize {
-		return nil, fmt.Errorf("Need a salt of size %d", SaltSize)
+	if salt != nil && len(salt) != SaltLen {
+		return nil, fmt.Errorf("Need a salt of size %d", SaltLen)
 	}
 	return &Cipher{passphrase, salt, nil}, nil
+}
+
+func (c *Cipher) SetSalt(salt []byte) error {
+	if len(salt) < SaltLen {
+		return fmt.Errorf("need salt of at least %d bytes", SaltLen)
+	}
+	c.salt = salt[0:SaltLen]
+	return nil
 }
 
 func (c *Cipher) GetSalt() ([]byte, error) {
 	if c.salt != nil {
 		return c.salt, nil
 	}
-	c.salt = make([]byte, SaltSize)
+	c.salt = make([]byte, SaltLen)
 	_, err := rand.Read(c.salt)
 	if err != nil {
 		return nil, err
@@ -53,8 +61,8 @@ func (c *Cipher) GetSalt() ([]byte, error) {
 
 func (c *Cipher) DeriveKey(dkLen int) ([]byte, []byte, error) {
 
-	if dkLen < DkSize {
-		dkLen = DkSize
+	if dkLen < DkLen {
+		dkLen = DkLen
 	}
 
 	if c.derivedKey == nil || len(c.derivedKey) < dkLen {
@@ -64,7 +72,7 @@ func (c *Cipher) DeriveKey(dkLen int) ([]byte, []byte, error) {
 		}
 		c.derivedKey = dk
 	}
-	return c.derivedKey[0:DkSize], c.derivedKey[DkSize:], nil
+	return c.derivedKey[0:DkLen], c.derivedKey[DkLen:], nil
 }
 
 // The MagicBytes are the four bytes prefixed to every TripleSec
@@ -77,13 +85,16 @@ const MacOutputLen = 64
 var (
 	macKeyLen    = 48
 	cipherKeyLen = 32
-	DkSize       = 2*macKeyLen + 3*cipherKeyLen
+	IVLen        = 16
+	SalsaIVLen   = 24
+	TotalIVLen   = 2*IVLen + SalsaIVLen
+	DkLen        = 2*macKeyLen + 3*cipherKeyLen
 )
 
 // Overhead is the amount of bytes added to a TripleSec ciphertext.
 // 	len(plaintext) + Overhead = len(ciphertext)
 // It consists of: magic bytes + version + salt + 2 * MACs + 3 * IVS.
-const Overhead = len(MagicBytes) + 4 + SaltSize + 2*MacOutputLen + 16 + 16 + 24
+var Overhead = len(MagicBytes) + 4 + SaltLen + 2*MacOutputLen + TotalIVLen
 
 // Encrypt encrypts and signs a plaintext message with TripleSec using a random
 // salt and the Cipher passphrase. The dst buffer size must be at least len(src)
@@ -119,7 +130,7 @@ func (c *Cipher) Encrypt(src []byte) (dst []byte, err error) {
 		return
 	}
 
-	dk, _, err := c.DeriveKey(DkSize)
+	dk, _, err := c.DeriveKey(0)
 	if err != nil {
 		return
 	}
@@ -147,7 +158,8 @@ func (c *Cipher) Encrypt(src []byte) (dst []byte, err error) {
 	}
 
 	if buf.Len() != len(src)+Overhead {
-		panic(fmt.Errorf("something went terribly wrong: output size wrong"))
+		err = fmt.Errorf("something went terribly wrong: output size wrong")
+		return
 	}
 
 	return buf.Bytes(), nil
@@ -158,10 +170,10 @@ func encrypt_data(plain, keys []byte) ([]byte, error) {
 	var block cipher.Block
 	var stream cipher.Stream
 
-	iv_offset := 16 + 16 + 24
+	iv_offset := TotalIVLen
 	res := make([]byte, len(plain)+iv_offset)
 
-	iv = res[iv_offset-24 : iv_offset]
+	iv = res[iv_offset-SalsaIVLen: iv_offset]
 	_, err := rand.Read(iv)
 	if err != nil {
 		return nil, err
@@ -170,9 +182,9 @@ func encrypt_data(plain, keys []byte) ([]byte, error) {
 	key_array := new([32]byte)
 	copy(key_array[:], keys[cipherKeyLen*2:])
 	salsa20.XORKeyStream(res[iv_offset:], plain, iv, key_array)
-	iv_offset -= 24
+	iv_offset -= SalsaIVLen
 
-	iv = res[iv_offset-16 : iv_offset]
+	iv = res[iv_offset-IVLen: iv_offset]
 	_, err = rand.Read(iv)
 	if err != nil {
 		return nil, err
@@ -184,9 +196,9 @@ func encrypt_data(plain, keys []byte) ([]byte, error) {
 	}
 	stream = cipher.NewCTR(block, iv)
 	stream.XORKeyStream(res[iv_offset:], res[iv_offset:])
-	iv_offset -= 16
+	iv_offset -= IVLen
 
-	iv = res[iv_offset-16 : iv_offset]
+	iv = res[iv_offset-IVLen: iv_offset]
 	_, err = rand.Read(iv)
 	if err != nil {
 		return nil, err
@@ -198,7 +210,7 @@ func encrypt_data(plain, keys []byte) ([]byte, error) {
 	}
 	stream = cipher.NewCTR(block, iv)
 	stream.XORKeyStream(res[iv_offset:], res[iv_offset:])
-	iv_offset -= 16
+	iv_offset -= IVLen
 
 	if iv_offset != 0 {
 		panic(fmt.Errorf("something went terribly wrong: iv_offset final value non-zero"))
@@ -229,32 +241,37 @@ func generate_macs(data, keys []byte) []byte {
 //
 // Encrypt returns a error if the ciphertext is not recognized, if
 // authentication fails or on memory failures.
-func (c *Cipher) Decrypt(dst, src []byte) error {
+func (c *Cipher) Decrypt(src []byte) (res []byte, err error) {
 	if len(src) <= Overhead {
-		return fmt.Errorf("the ciphertext is too short to be a TripleSec ciphertext")
-	}
-	if len(dst) < len(src)-Overhead {
-		return fmt.Errorf("the dst buffer is too short to hold the plaintext")
+		err = fmt.Errorf("decryption underrun")
+		return
 	}
 
 	if !bytes.Equal(src[:4], MagicBytes[0:]) {
-		return fmt.Errorf("the ciphertext does not look like a TripleSec ciphertext")
+		err = fmt.Errorf("wrong magic bytes")
+		return
 	}
 
 	v := make([]byte, 4)
 	v_b := bytes.NewBuffer(v[:0])
-	err := binary.Write(v_b, binary.BigEndian, uint32(3))
+	err = binary.Write(v_b, binary.BigEndian, uint32(3))
 	if err != nil {
-		return err
-	}
-	if !bytes.Equal(src[4:8], v) {
-		return fmt.Errorf("unknown version")
+		return
 	}
 
-	salt := src[8:24]
-	dk, err := scrypt.Key(c.passphrase, salt, 32768, 8, 1, DkSize)
+	if !bytes.Equal(src[4:8], v) {
+		err = fmt.Errorf("unknown version")
+		return
+	}
+
+	err = c.SetSalt(src[8:24])
 	if err != nil {
-		return err
+		return
+	}
+
+	dk, _, err := c.DeriveKey(0)
+	if err != nil {
+		return
 	}
 	macKeys := dk[:macKeyLen*2]
 	cipherKeys := dk[macKeyLen*2:]
@@ -267,15 +284,18 @@ func (c *Cipher) Decrypt(dst, src []byte) error {
 	authenticatedData = append(authenticatedData, encryptedData...)
 
 	if !hmac.Equal(macs, generate_macs(authenticatedData, macKeys)) {
-		return fmt.Errorf("TripleSec ciphertext authentication FAILED")
+		err = fmt.Errorf("HMAC checks failed")
+		return
 	}
+
+	dst := make([]byte, len(src) - Overhead)
 
 	err = decrypt_data(dst, encryptedData, cipherKeys)
 	if err != nil {
-		return err
+		return
 	}
 
-	return nil
+	return dst, nil
 }
 
 func decrypt_data(dst, data, keys []byte) error {
@@ -286,7 +306,7 @@ func decrypt_data(dst, data, keys []byte) error {
 
 	buffer := append([]byte{}, data...)
 
-	iv_offset := 16
+	iv_offset := IVLen
 	iv = buffer[:iv_offset]
 	key = keys[:cipherKeyLen]
 	block, err = aes.NewCipher(key)
@@ -296,8 +316,8 @@ func decrypt_data(dst, data, keys []byte) error {
 	stream = cipher.NewCTR(block, iv)
 	stream.XORKeyStream(buffer[iv_offset:], buffer[iv_offset:])
 
-	iv_offset += 16
-	iv = buffer[iv_offset-16 : iv_offset]
+	iv_offset += IVLen
+	iv = buffer[iv_offset-IVLen: iv_offset]
 	key = keys[cipherKeyLen : cipherKeyLen*2]
 	block, err = twofish.NewCipher(key)
 	if err != nil {
@@ -306,14 +326,14 @@ func decrypt_data(dst, data, keys []byte) error {
 	stream = cipher.NewCTR(block, iv)
 	stream.XORKeyStream(buffer[iv_offset:], buffer[iv_offset:])
 
-	iv_offset += 24
-	iv = buffer[iv_offset-24 : iv_offset]
+	iv_offset += SalsaIVLen
+	iv = buffer[iv_offset-SalsaIVLen: iv_offset]
 	key_array := new([32]byte)
 	copy(key_array[:], keys[cipherKeyLen*2:])
 	salsa20.XORKeyStream(dst, buffer[iv_offset:], iv, key_array)
 
-	if len(buffer[iv_offset:]) != len(data)-(16+16+24) {
-		panic(fmt.Errorf("something went terribly wrong: buffer size is not consistent"))
+	if len(buffer[iv_offset:]) != len(data)-TotalIVLen {
+		return fmt.Errorf("something went terribly wrong: bufsz is wrong")
 	}
 
 	return nil
