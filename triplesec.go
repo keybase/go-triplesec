@@ -51,16 +51,20 @@ func (c *Cipher) GetSalt() ([]byte, error) {
 	return c.salt, nil
 }
 
-func (c *Cipher) DeriveKey(dkLen int) ([]byte, error) {
-	if c.derivedKey != nil && len(c.derivedKey) >= dkLen {
-		return c.derivedKey[0:dkLen], nil
+func (c *Cipher) DeriveKey(dkLen int) ([]byte, []byte, error) {
+
+	if dkLen < DkSize {
+		dkLen = DkSize
 	}
-	dk, err := scrypt.Key(c.passphrase, c.salt, 32768, 8, 1, dkLen)
-	if err != nil {
-		return nil, err
+
+	if c.derivedKey == nil || len(c.derivedKey) < dkLen {
+		dk, err := scrypt.Key(c.passphrase, c.salt, 32768, 8, 1, dkLen)
+		if err != nil {
+			return nil, nil, err
+		}
+		c.derivedKey = dk
 	}
-	c.derivedKey = dk
-	return dk, err
+	return c.derivedKey[0:DkSize], c.derivedKey[DkSize:], nil
 }
 
 // The MagicBytes are the four bytes prefixed to every TripleSec
@@ -115,7 +119,7 @@ func (c *Cipher) Encrypt(src []byte) (dst []byte, err error) {
 		return
 	}
 
-	dk, err := c.DeriveKey(DkSize)
+	dk, _, err := c.DeriveKey(DkSize)
 	if err != nil {
 		return
 	}
