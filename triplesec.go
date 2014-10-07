@@ -22,77 +22,102 @@ import (
 	"fmt"
 )
 
-// A Cipher is an instance of TripleSec using a particular key.
+const SaltSize = 16
+
 type Cipher struct {
 	passphrase []byte
+	salt       []byte
+	derivedKey []byte
 }
+
+// A Cipher is an instance of TripleSec using a particular key and
+// a particular salt
+func NewCipher(passphrase []byte, salt []byte) (*Cipher, error) {
+	if salt != nil && len(salt) != SaltSize {
+		return nil, fmt.Errorf("Need a salt of size %d", SaltSize)
+	}
+	return &Cipher{passphrase, salt, nil}, nil
+}
+
+func (c *Cipher) GetSalt() ([]byte, error) {
+	if c.salt != nil {
+		return c.salt, nil
+	}
+	c.salt = make([]byte, SaltSize)
+	_, err := rand.Read(c.salt)
+	if err != nil {
+		return nil, err
+	}
+	return c.salt, nil
+}
+
+func (c *Cipher) DeriveKey(dkLen int) ([]byte, error) {
+	if c.derivedKey != nil && len(c.derivedKey) >= dkLen {
+		return c.derivedKey[0:dkLen], nil
+	}
+	dk, err := scrypt.Key(c.passphrase, c.salt, 32768, 8, 1, dkLen)
+	if err != nil {
+		return nil, err
+	}
+	c.derivedKey = dk
+	return dk, err
+}
+
+// The MagicBytes are the four bytes prefixed to every TripleSec
+// ciphertext, 1c 94 d7 de.
+var MagicBytes = [4]byte{ 0x1c, 0x94, 0xd7, 0xde }
+
+var Version uint32 = 3
+const MacOutputLen = 64
+
+var (
+	macKeyLen    = 48
+	cipherKeyLen = 32
+	DkSize       = 2*macKeyLen + 3*cipherKeyLen
+)
 
 // Overhead is the amount of bytes added to a TripleSec ciphertext.
 // 	len(plaintext) + Overhead = len(ciphertext)
 // It consists of: magic bytes + version + salt + 2 * MACs + 3 * IVS.
-const Overhead = 4 + 4 + 16 + 64 + 64 + 16 + 16 + 24
-
-// The MagicBytes are the four bytes prefixed to every TripleSec
-// ciphertext, 1c 94 d7 de.
-const MagicBytes = "\x1c\x94\xd7\xde"
-
-var (
-	saltSize     = 16
-	macKeyLen    = 48
-	cipherKeyLen = 32
-	dkSize       = 2*macKeyLen + 3*cipherKeyLen
-)
-
-// NewCipher creates and returns a Cipher.
-// The passphrase can be a human passphrase, and is stretched with scrypt
-// and a random salt. However, a long passphrase is strongly recommended.
-// There are no limits on passphrase length.
-func NewCipher(passphrase []byte) *Cipher {
-	c := new(Cipher)
-	c.passphrase = append(c.passphrase, passphrase...)
-
-	return c
-}
+const Overhead = len(MagicBytes) + 4 + SaltSize + 2*MacOutputLen + 16 + 16 + 24
 
 // Encrypt encrypts and signs a plaintext message with TripleSec using a random
 // salt and the Cipher passphrase. The dst buffer size must be at least len(src)
 // + Overhead. dst and src can not overlap. src is left untouched.
 //
 // Encrypt returns a error on memory or RNG failures.
-func (c *Cipher) Encrypt(dst, src []byte) error {
+func (c *Cipher) Encrypt(src []byte) (dst []byte, err error) {
 	if len(src) < 1 {
-		return fmt.Errorf("the plaintext cannot be empty")
-	}
-	if len(dst) < len(src)+Overhead {
-		return fmt.Errorf("the destination is shorter than the plaintext plus Overhead")
+		return nil, fmt.Errorf("the plaintext cannot be empty")
 	}
 
+	dst = make([]byte, len(src) + Overhead)
 	buf := bytes.NewBuffer(dst[:0])
 
-	_, err := buf.Write([]byte(MagicBytes))
+	_, err = buf.Write(MagicBytes[0:])
 	if err != nil {
-		return err
+		return
 	}
 
 	// Write version
-	err = binary.Write(buf, binary.BigEndian, uint32(3))
+	err = binary.Write(buf, binary.BigEndian, Version)
 	if err != nil {
-		return err
+		return
 	}
 
-	salt := make([]byte, saltSize)
-	_, err = rand.Read(salt)
+	salt, err := c.GetSalt()
 	if err != nil {
-		return err
+		return
 	}
+
 	_, err = buf.Write(salt)
 	if err != nil {
-		return err
+		return
 	}
 
-	dk, err := scrypt.Key(c.passphrase, salt, 32768, 8, 1, dkSize)
+	dk, err := c.DeriveKey(DkSize)
 	if err != nil {
-		return err
+		return
 	}
 	macKeys := dk[:macKeyLen*2]
 	cipherKeys := dk[macKeyLen*2:]
@@ -100,7 +125,7 @@ func (c *Cipher) Encrypt(dst, src []byte) error {
 	// The allocation over here can be made better
 	encryptedData, err := encrypt_data(src, cipherKeys)
 	if err != nil {
-		return err
+		return
 	}
 
 	authenticatedData := make([]byte, 0, buf.Len()+len(encryptedData))
@@ -110,18 +135,18 @@ func (c *Cipher) Encrypt(dst, src []byte) error {
 
 	_, err = buf.Write(macsOutput)
 	if err != nil {
-		return err
+		return
 	}
 	_, err = buf.Write(encryptedData)
 	if err != nil {
-		return err
+		return
 	}
 
 	if buf.Len() != len(src)+Overhead {
-		panic(fmt.Errorf("something went terribly wrong: output size is not consistent"))
+		panic(fmt.Errorf("something went terribly wrong: output size wrong"))
 	}
 
-	return nil
+	return buf.Bytes(), nil
 }
 
 func encrypt_data(plain, keys []byte) ([]byte, error) {
@@ -208,7 +233,7 @@ func (c *Cipher) Decrypt(dst, src []byte) error {
 		return fmt.Errorf("the dst buffer is too short to hold the plaintext")
 	}
 
-	if !bytes.Equal(src[:4], []byte(MagicBytes)) {
+	if !bytes.Equal(src[:4], MagicBytes[0:]) {
 		return fmt.Errorf("the ciphertext does not look like a TripleSec ciphertext")
 	}
 
@@ -223,7 +248,7 @@ func (c *Cipher) Decrypt(dst, src []byte) error {
 	}
 
 	salt := src[8:24]
-	dk, err := scrypt.Key(c.passphrase, salt, 32768, 8, 1, dkSize)
+	dk, err := scrypt.Key(c.passphrase, salt, 32768, 8, 1, DkSize)
 	if err != nil {
 		return err
 	}
