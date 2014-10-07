@@ -187,7 +187,7 @@ func generate_macs(data, keys []byte) []byte {
 	res = mac.Sum(res)
 
 	key = keys[macKeyLen:]
-	mac = hmac.New(sha3.NewKeccak512, key)
+	mac = hmac.New(sha3.New512, key)
 	mac.Write(data)
 	res = mac.Sum(res)
 
@@ -238,6 +238,8 @@ func (c *Cipher) Decrypt(dst, src []byte) error {
 	authenticatedData = append(authenticatedData, encryptedData...)
 
 	if !hmac.Equal(macs, generate_macs(authenticatedData, macKeys)) {
+                fmt.Printf("%v", macs)
+                fmt.Printf("%v", generate_macs(authenticatedData, macKeys))
 		return fmt.Errorf("TripleSec ciphertext authentication FAILED")
 	}
 
