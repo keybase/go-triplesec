@@ -11,7 +11,6 @@ import (
 	"bytes"
 	"code.google.com/p/go.crypto/salsa20"
 	"code.google.com/p/go.crypto/scrypt"
-	"github.com/keybase/go-triplesec/sha3"
 	"code.google.com/p/go.crypto/twofish"
 	"crypto/aes"
 	"crypto/cipher"
@@ -20,6 +19,7 @@ import (
 	"crypto/sha512"
 	"encoding/binary"
 	"fmt"
+	"github.com/keybase/go-triplesec/sha3"
 )
 
 const SaltLen = 16
@@ -75,9 +75,10 @@ func (c *Cipher) DeriveKey(extra int) ([]byte, []byte, error) {
 
 // The MagicBytes are the four bytes prefixed to every TripleSec
 // ciphertext, 1c 94 d7 de.
-var MagicBytes = [4]byte{ 0x1c, 0x94, 0xd7, 0xde }
+var MagicBytes = [4]byte{0x1c, 0x94, 0xd7, 0xde}
 
 var Version uint32 = 3
+
 const MacOutputLen = 64
 
 var (
@@ -104,7 +105,7 @@ func (c *Cipher) Encrypt(src []byte) (dst []byte, err error) {
 		return nil, fmt.Errorf("the plaintext cannot be empty")
 	}
 
-	dst = make([]byte, len(src) + Overhead)
+	dst = make([]byte, len(src)+Overhead)
 	buf := bytes.NewBuffer(dst[:0])
 
 	_, err = buf.Write(MagicBytes[0:])
@@ -171,7 +172,7 @@ func encrypt_data(plain, keys []byte) ([]byte, error) {
 	iv_offset := TotalIVLen
 	res := make([]byte, len(plain)+iv_offset)
 
-	iv = res[iv_offset-SalsaIVLen: iv_offset]
+	iv = res[iv_offset-SalsaIVLen : iv_offset]
 	_, err := rand.Read(iv)
 	if err != nil {
 		return nil, err
@@ -182,7 +183,7 @@ func encrypt_data(plain, keys []byte) ([]byte, error) {
 	salsa20.XORKeyStream(res[iv_offset:], plain, iv, key_array)
 	iv_offset -= SalsaIVLen
 
-	iv = res[iv_offset-IVLen: iv_offset]
+	iv = res[iv_offset-IVLen : iv_offset]
 	_, err = rand.Read(iv)
 	if err != nil {
 		return nil, err
@@ -196,7 +197,7 @@ func encrypt_data(plain, keys []byte) ([]byte, error) {
 	stream.XORKeyStream(res[iv_offset:], res[iv_offset:])
 	iv_offset -= IVLen
 
-	iv = res[iv_offset-IVLen: iv_offset]
+	iv = res[iv_offset-IVLen : iv_offset]
 	_, err = rand.Read(iv)
 	if err != nil {
 		return nil, err
@@ -241,24 +242,25 @@ func generate_macs(data, keys []byte) []byte {
 // authentication fails or on memory failures.
 func (c *Cipher) Decrypt(src []byte) (res []byte, err error) {
 	if len(src) <= Overhead {
-		err = fmt.Errorf("decryption underrun")
+		err = CorruptionError{"decryption underrun"}
 		return
 	}
 
 	if !bytes.Equal(src[:4], MagicBytes[0:]) {
-		err = fmt.Errorf("wrong magic bytes")
+		err = CorruptionError{"wrong magic bytes"}
 		return
 	}
 
-	v := make([]byte, 4)
-	v_b := bytes.NewBuffer(v[:0])
-	err = binary.Write(v_b, binary.BigEndian, uint32(3))
+	v_b := bytes.NewBuffer(src[4:8])
+	var version uint32
+	err = binary.Read(v_b, binary.BigEndian, &version)
 	if err != nil {
+		err = CorruptionError{err.Error()}
 		return
 	}
 
-	if !bytes.Equal(src[4:8], v) {
-		err = fmt.Errorf("unknown version")
+	if version != Version {
+		err = VersionError{version}
 		return
 	}
 
@@ -282,11 +284,11 @@ func (c *Cipher) Decrypt(src []byte) (res []byte, err error) {
 	authenticatedData = append(authenticatedData, encryptedData...)
 
 	if !hmac.Equal(macs, generate_macs(authenticatedData, macKeys)) {
-		err = fmt.Errorf("HMAC checks failed")
+		err = BadPassphraseError{}
 		return
 	}
 
-	dst := make([]byte, len(src) - Overhead)
+	dst := make([]byte, len(src)-Overhead)
 
 	err = decrypt_data(dst, encryptedData, cipherKeys)
 	if err != nil {
@@ -315,7 +317,7 @@ func decrypt_data(dst, data, keys []byte) error {
 	stream.XORKeyStream(buffer[iv_offset:], buffer[iv_offset:])
 
 	iv_offset += IVLen
-	iv = buffer[iv_offset-IVLen: iv_offset]
+	iv = buffer[iv_offset-IVLen : iv_offset]
 	key = keys[cipherKeyLen : cipherKeyLen*2]
 	block, err = twofish.NewCipher(key)
 	if err != nil {
@@ -325,7 +327,7 @@ func decrypt_data(dst, data, keys []byte) error {
 	stream.XORKeyStream(buffer[iv_offset:], buffer[iv_offset:])
 
 	iv_offset += SalsaIVLen
-	iv = buffer[iv_offset-SalsaIVLen: iv_offset]
+	iv = buffer[iv_offset-SalsaIVLen : iv_offset]
 	key_array := new([32]byte)
 	copy(key_array[:], keys[cipherKeyLen*2:])
 	salsa20.XORKeyStream(dst, buffer[iv_offset:], iv, key_array)
