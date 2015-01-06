@@ -30,6 +30,12 @@ type Cipher struct {
 	derivedKey []byte
 }
 
+func scrub(b []byte) {
+	for i,_ := range b {
+		b[i] = 0
+	}
+}
+
 // A Cipher is an instance of TripleSec using a particular key and
 // a particular salt
 func NewCipher(passphrase []byte, salt []byte) (*Cipher, error) {
@@ -37,6 +43,11 @@ func NewCipher(passphrase []byte, salt []byte) (*Cipher, error) {
 		return nil, fmt.Errorf("Need a salt of size %d", SaltLen)
 	}
 	return &Cipher{passphrase, salt, nil}, nil
+}
+
+func (c *Cipher) Scrub() {
+	scrub(c.passphrase)
+	scrub(c.derivedKey)
 }
 
 func (c *Cipher) SetSalt(salt []byte) error {
