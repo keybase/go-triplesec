@@ -9,9 +9,6 @@ package triplesec
 
 import (
 	"bytes"
-	"code.google.com/p/go.crypto/salsa20"
-	"code.google.com/p/go.crypto/scrypt"
-	"code.google.com/p/go.crypto/twofish"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/hmac"
@@ -19,7 +16,11 @@ import (
 	"crypto/sha512"
 	"encoding/binary"
 	"fmt"
+
 	"github.com/keybase/go-triplesec/sha3"
+	"golang.org/x/crypto/salsa20"
+	"golang.org/x/crypto/scrypt"
+	"golang.org/x/crypto/twofish"
 )
 
 const SaltLen = 16
@@ -31,7 +32,7 @@ type Cipher struct {
 }
 
 func scrub(b []byte) {
-	for i,_ := range b {
+	for i, _ := range b {
 		b[i] = 0
 	}
 }
