@@ -59,6 +59,13 @@ func (c *Cipher) SetSalt(salt []byte) error {
 	return nil
 }
 
+func (c *Cipher) CopyWithoutPassphrase() *Cipher {
+	return &Cipher{
+		salt: append([]byte{}, c.salt...),
+		derivedKey: append([]byte{}, c.derivedKey...),
+	}
+}
+
 func (c *Cipher) GetSalt() ([]byte, error) {
 	if c.salt != nil {
 		return c.salt, nil
@@ -76,6 +83,9 @@ func (c *Cipher) DeriveKey(extra int) ([]byte, []byte, error) {
 	dkLen := DkLen + extra
 
 	if c.derivedKey == nil || len(c.derivedKey) < dkLen {
+		if len(c.passphrase) == 0 {
+			return nil, nil, fmt.Errorf("no passphrase set")
+		}
 		dk, err := scrypt.Key(c.passphrase, c.salt, 32768, 8, 1, dkLen)
 		if err != nil {
 			return nil, nil, err

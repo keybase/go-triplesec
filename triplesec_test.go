@@ -21,6 +21,7 @@ func TestCycle(t *testing.T) {
 
 	orig_plaintext := append([]byte{}, plaintext...)
 	ciphertext, err := c.Encrypt(plaintext)
+	encryptorCopy := c.CopyWithoutPassphrase()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,6 +43,25 @@ func TestCycle(t *testing.T) {
 	}
 	if !bytes.Equal(password, []byte("42")) {
 		t.Error("password changed")
+	}
+
+	ciphertext2, err := encryptorCopy.Encrypt(plaintext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plaintext2, err := c.Decrypt(ciphertext2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(plaintext, plaintext2) {
+		t.Error("copied encryptor didn't work")
+	}
+	plaintext3, err := encryptorCopy.Decrypt(ciphertext2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(plaintext, plaintext3) {
+		t.Error("copied decryptor didn't work")
 	}
 }
 
