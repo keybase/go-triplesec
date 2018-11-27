@@ -7,6 +7,9 @@ package triplesec
 import (
 	"bytes"
 	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"os"
 	"testing"
 )
 
@@ -217,5 +220,36 @@ func TestBadPwV4(t *testing.T) {
 		t.Error("needed an error on bad PW")
 	} else if _, ok := err.(BadPassphraseError); !ok {
 		t.Error("got wrong type of error")
+	}
+}
+
+type vector struct {
+	Key string `json:"key"`
+	Pt  string `json:"pt"`
+	Ct  string `json:"ct"`
+}
+
+type testVectors struct {
+	Vectors []vector `json:"vectors"`
+}
+
+func TestSpec(t *testing.T) {
+	for _, version := range []Version{3, 4} {
+		handle, _ := os.Open(fmt.Sprintf("spec/triplesec_v%d.json", version))
+		dec := json.NewDecoder(handle)
+		var vs testVectors
+		dec.Decode(&vs)
+		for _, v := range vs.Vectors {
+			key, _ := hex.DecodeString(v.Key)
+			ct, _ := hex.DecodeString(v.Ct)
+			c, _ := NewCipher(key, nil, version)
+			decrypted, _ := c.Decrypt(ct)
+			got := hex.EncodeToString(decrypted)
+			if v.Pt != got {
+				t.Errorf("failed test vector for version %v and key %v", version, key)
+			}
+		}
+
+		defer handle.Close()
 	}
 }
