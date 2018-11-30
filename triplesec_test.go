@@ -22,26 +22,26 @@ func testCycle(t *testing.T, version Version) {
 		t.Fatal(err)
 	}
 
-	orig_plaintext := append([]byte{}, plaintext...)
+	origPlaintext := append([]byte{}, plaintext...)
 	ciphertext, err := c.Encrypt(plaintext)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	orig_ciphertext := append([]byte{}, ciphertext...)
-	new_plaintext, err := c.Decrypt(ciphertext)
+	origCiphertext := append([]byte{}, ciphertext...)
+	newPlaintext, err := c.Decrypt(ciphertext)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if !bytes.Equal(new_plaintext, plaintext) {
-		t.Error("new_plaintext != plaintext")
+	if !bytes.Equal(newPlaintext, plaintext) {
+		t.Error("newPlaintext != plaintext")
 	}
-	if !bytes.Equal(orig_plaintext, plaintext) {
-		t.Error("orig_plaintext != plaintext")
+	if !bytes.Equal(origPlaintext, plaintext) {
+		t.Error("origPlaintext != plaintext")
 	}
-	if !bytes.Equal(orig_ciphertext, ciphertext) {
-		t.Error("orig_ciphertext != ciphertext")
+	if !bytes.Equal(origCiphertext, ciphertext) {
+		t.Error("origCiphertext != ciphertext")
 	}
 	if !bytes.Equal(password, []byte("42")) {
 		t.Error("password changed")
@@ -49,7 +49,7 @@ func testCycle(t *testing.T, version Version) {
 }
 
 func TestCycle(t *testing.T) {
-	for version, _ := range versionParamsLookup {
+	for version := range versionParamsLookup {
 		testCycle(t, version)
 	}
 }
@@ -102,26 +102,26 @@ func testBiggerBufSizes(t *testing.T, version Version) {
 		t.Fatal(err)
 	}
 
-	orig_plaintext := append([]byte{}, plaintext...)
+	origPlaintext := append([]byte{}, plaintext...)
 	ciphertext, err := c.Encrypt(plaintext)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	orig_ciphertext := append([]byte{}, ciphertext...)
-	new_plaintext, err := c.Decrypt(ciphertext)
+	origCiphertext := append([]byte{}, ciphertext...)
+	newPlaintext, err := c.Decrypt(ciphertext)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if !bytes.Equal(new_plaintext[:len(plaintext)], plaintext) {
-		t.Error("new_plaintext != plaintext")
+	if !bytes.Equal(newPlaintext[:len(plaintext)], plaintext) {
+		t.Error("newPlaintext != plaintext")
 	}
-	if !bytes.Equal(orig_plaintext, plaintext) {
-		t.Error("orig_plaintext != plaintext")
+	if !bytes.Equal(origPlaintext, plaintext) {
+		t.Error("origPlaintext != plaintext")
 	}
-	if !bytes.Equal(orig_ciphertext, ciphertext) {
-		t.Error("orig_ciphertext != ciphertext")
+	if !bytes.Equal(origCiphertext, ciphertext) {
+		t.Error("origCiphertext != ciphertext")
 	}
 	if !bytes.Equal(password, []byte("42")) {
 		t.Error("password changed")
@@ -129,7 +129,7 @@ func testBiggerBufSizes(t *testing.T, version Version) {
 }
 
 func TestBiggerBufSizes(t *testing.T) {
-	for version, _ := range versionParamsLookup {
+	for version := range versionParamsLookup {
 		testBiggerBufSizes(t, version)
 	}
 }
@@ -143,26 +143,26 @@ func testSmallerBufSizes(t *testing.T, version Version) {
 		t.Fatal(err)
 	}
 
-	orig_plaintext := append([]byte{}, plaintext...)
+	origPlaintext := append([]byte{}, plaintext...)
 	ciphertext, err := c.Encrypt(plaintext)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	orig_ciphertext := append([]byte{}, ciphertext...)
-	new_plaintext, err := c.Decrypt(ciphertext)
+	origCiphertext := append([]byte{}, ciphertext...)
+	newPlaintext, err := c.Decrypt(ciphertext)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if !bytes.Equal(new_plaintext, plaintext) {
-		t.Error("new_plaintext != plaintext")
+	if !bytes.Equal(newPlaintext, plaintext) {
+		t.Error("newPlaintext != plaintext")
 	}
-	if !bytes.Equal(orig_plaintext, plaintext) {
-		t.Error("orig_plaintext != plaintext")
+	if !bytes.Equal(origPlaintext, plaintext) {
+		t.Error("origPlaintext != plaintext")
 	}
-	if !bytes.Equal(orig_ciphertext, ciphertext) {
-		t.Error("orig_ciphertext != ciphertext")
+	if !bytes.Equal(origCiphertext, ciphertext) {
+		t.Error("origCiphertext != ciphertext")
 	}
 	if !bytes.Equal(password, []byte("42")) {
 		t.Error("password changed")
@@ -170,7 +170,7 @@ func testSmallerBufSizes(t *testing.T, version Version) {
 }
 
 func TestSmallerBufSizes(t *testing.T) {
-	for version, _ := range versionParamsLookup {
+	for version := range versionParamsLookup {
 		testSmallerBufSizes(t, version)
 	}
 }
@@ -227,6 +227,7 @@ type vector struct {
 	Key string `json:"key"`
 	Pt  string `json:"pt"`
 	Ct  string `json:"ct"`
+	R   string `json:"r"`
 }
 
 type testVectors struct {
@@ -236,20 +237,29 @@ type testVectors struct {
 func TestSpec(t *testing.T) {
 	for _, version := range []Version{3, 4} {
 		handle, _ := os.Open(fmt.Sprintf("spec/triplesec_v%d.json", version))
-		dec := json.NewDecoder(handle)
+		defer handle.Close()
+
 		var vs testVectors
+		dec := json.NewDecoder(handle)
 		dec.Decode(&vs)
+
 		for _, v := range vs.Vectors {
 			key, _ := hex.DecodeString(v.Key)
+			pt, _ := hex.DecodeString(v.Pt)
 			ct, _ := hex.DecodeString(v.Ct)
-			c, _ := NewCipher(key, nil, version)
-			decrypted, _ := c.Decrypt(ct)
-			got := hex.EncodeToString(decrypted)
-			if v.Pt != got {
-				t.Errorf("failed test vector for version %v and key %v", version, key)
+			r, _ := hex.DecodeString(v.R)
+
+			cipher, _ := NewCipher(key, nil, version)
+			decrypted, _ := cipher.Decrypt(ct)
+			if v.Pt != hex.EncodeToString(decrypted) {
+				t.Errorf("failed decryption test vector for version %v and key %v", version, key)
+			}
+
+			fixedRandomnessCipher, _ := NewCipherWithRng(key, nil, version, NewRandomTapeGenerator(r))
+			encrypted, _ := fixedRandomnessCipher.Encrypt(pt)
+			if v.Ct != hex.EncodeToString(encrypted) {
+				t.Errorf("failed encryption test vector for version %x and key %x", version, key)
 			}
 		}
-
-		defer handle.Close()
 	}
 }

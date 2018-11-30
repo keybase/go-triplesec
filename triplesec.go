@@ -25,6 +25,36 @@ import (
 	"github.com/keybase/go-crypto/sha3"
 )
 
+type RandomnessGenerator interface {
+	Read(b []byte) (n int, err error)
+}
+
+type CryptoRandGenerator struct{}
+
+func (crg CryptoRandGenerator) Read(b []byte) (n int, err error) {
+	return rand.Read(b)
+}
+
+func NewCryptoRandGenerator() CryptoRandGenerator {
+	return CryptoRandGenerator{}
+}
+
+var _ RandomnessGenerator = (*CryptoRandGenerator)(nil)
+
+type RandomTapeGenerator struct {
+	randomTape *bytes.Reader
+}
+
+func NewRandomTapeGenerator(randomTape []byte) RandomTapeGenerator {
+	return RandomTapeGenerator{bytes.NewReader(randomTape)}
+}
+
+func (rtg RandomTapeGenerator) Read(b []byte) (n int, err error) {
+	return rtg.randomTape.Read(b)
+}
+
+var _ RandomnessGenerator = (*RandomTapeGenerator)(nil)
+
 const SaltLen = 16
 const VersionBytesLen = 4
 const AESIVLen = 16
@@ -79,26 +109,33 @@ type Cipher struct {
 	salt          []byte
 	derivedKey    []byte
 	versionParams VersionParams
+	rng           RandomnessGenerator
 }
 
 func scrub(b []byte) {
-	for i, _ := range b {
+	for i := range b {
 		b[i] = 0
 	}
 }
 
-// A Cipher is an instance of TripleSec using a particular key and
+// NewCipher makes an instance of TripleSec using a particular key and
 // a particular salt
 func NewCipher(passphrase []byte, salt []byte, version Version) (*Cipher, error) {
+	return NewCipherWithRng(passphrase, salt, version, NewCryptoRandGenerator())
+}
+
+// NewCipherWithRng makes an instance of TripleSec using a particular key and
+// a particular salt and uses a given randomness stream
+func NewCipherWithRng(passphrase []byte, salt []byte, version Version, rng RandomnessGenerator) (*Cipher, error) {
 	if salt != nil && len(salt) != SaltLen {
 		return nil, fmt.Errorf("Need a salt of size %d", SaltLen)
 	}
 	var versionParams VersionParams
 	var ok bool
 	if versionParams, ok = versionParamsLookup[version]; !ok {
-		return nil, fmt.Errorf("Not a valid version.")
+		return nil, fmt.Errorf("Not a valid version")
 	}
-	return &Cipher{passphrase, salt, nil, versionParams}, nil
+	return &Cipher{passphrase, salt, nil, versionParams, rng}, nil
 }
 
 func (c *Cipher) Scrub() {
@@ -119,7 +156,7 @@ func (c *Cipher) GetSalt() ([]byte, error) {
 		return c.salt, nil
 	}
 	c.salt = make([]byte, SaltLen)
-	_, err := rand.Read(c.salt)
+	_, err := c.rng.Read(c.salt)
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +177,7 @@ func (c *Cipher) DeriveKey(extra int) ([]byte, []byte, error) {
 	return c.derivedKey[0:c.versionParams.DkLen], c.derivedKey[c.versionParams.DkLen:], nil
 }
 
-// The MagicBytes are the four bytes prefixed to every TripleSec
+// MagicBytes are the four bytes prefixed to every TripleSec
 // ciphertext, 1c 94 d7 de.
 var MagicBytes = [4]byte{0x1c, 0x94, 0xd7, 0xde}
 
@@ -186,7 +223,7 @@ func (c *Cipher) Encrypt(src []byte) (dst []byte, err error) {
 	cipherKeys := dk[c.versionParams.TotalMacKeyLen:]
 
 	// The allocation over here can be made better
-	encryptedData, err := encrypt_data(src, cipherKeys, c.versionParams)
+	encryptedData, err := encryptData(src, cipherKeys, c.rng, c.versionParams)
 	if err != nil {
 		return
 	}
@@ -194,7 +231,7 @@ func (c *Cipher) Encrypt(src []byte) (dst []byte, err error) {
 	authenticatedData := make([]byte, 0, buf.Len()+len(encryptedData))
 	authenticatedData = append(authenticatedData, buf.Bytes()...)
 	authenticatedData = append(authenticatedData, encryptedData...)
-	macsOutput := generate_macs(authenticatedData, macKeys, c.versionParams)
+	macsOutput := generateMACs(authenticatedData, macKeys, c.versionParams)
 
 	_, err = buf.Write(macsOutput)
 	if err != nil {
@@ -213,17 +250,17 @@ func (c *Cipher) Encrypt(src []byte) (dst []byte, err error) {
 	return buf.Bytes(), nil
 }
 
-func encrypt_data(plain, keys []byte, versionParams VersionParams) ([]byte, error) {
+func encryptData(plain, keys []byte, rng RandomnessGenerator, versionParams VersionParams) ([]byte, error) {
 	var iv, key []byte
 	var block cipher.Block
 	var stream cipher.Stream
 
-	iv_offset := versionParams.TotalIVLen
-	res := make([]byte, len(plain)+iv_offset)
+	ivOffset := versionParams.TotalIVLen
+	res := make([]byte, len(plain)+ivOffset)
 
 	// Generate IVs
-	iv = res[:iv_offset]
-	_, err := rand.Read(iv)
+	iv = res[:ivOffset]
+	_, err := rng.Read(iv)
 	if err != nil {
 		return nil, err
 	}
@@ -242,11 +279,11 @@ func encrypt_data(plain, keys []byte, versionParams VersionParams) ([]byte, erro
 
 	// Salsa20
 	// For some reason salsa20 API is different
-	key_array := new([32]byte)
-	copy(key_array[:], keys[len(keys)-cipherOffset-CipherKeyLen:])
+	keyArray := new([32]byte)
+	copy(keyArray[:], keys[len(keys)-cipherOffset-CipherKeyLen:])
 	cipherOffset += CipherKeyLen
-	salsa20.XORKeyStream(res[iv_offset:], plain, salsaIV, key_array)
-	iv_offset -= len(salsaIV)
+	salsa20.XORKeyStream(res[ivOffset:], plain, salsaIV, keyArray)
+	ivOffset -= len(salsaIV)
 
 	// Twofish
 	if versionParams.UseTwofish {
@@ -257,8 +294,8 @@ func encrypt_data(plain, keys []byte, versionParams VersionParams) ([]byte, erro
 			return nil, err
 		}
 		stream = cipher.NewCTR(block, twofishIV)
-		stream.XORKeyStream(res[iv_offset:], res[iv_offset:])
-		iv_offset -= len(twofishIV)
+		stream.XORKeyStream(res[ivOffset:], res[ivOffset:])
+		ivOffset -= len(twofishIV)
 	}
 
 	// AES
@@ -269,17 +306,17 @@ func encrypt_data(plain, keys []byte, versionParams VersionParams) ([]byte, erro
 		return nil, err
 	}
 	stream = cipher.NewCTR(block, aesIV)
-	stream.XORKeyStream(res[iv_offset:], res[iv_offset:])
-	iv_offset -= len(aesIV)
+	stream.XORKeyStream(res[ivOffset:], res[ivOffset:])
+	ivOffset -= len(aesIV)
 
-	if iv_offset != 0 {
-		return nil, CorruptionError{"something went terribly wrong during encryption: iv_offset final value non-zero"}
+	if ivOffset != 0 {
+		return nil, CorruptionError{"something went terribly wrong during encryption: ivOffset final value non-zero"}
 	}
 
 	return res, nil
 }
 
-func generate_macs(data, keys []byte, versionParams VersionParams) []byte {
+func generateMACs(data, keys []byte, versionParams VersionParams) []byte {
 	res := make([]byte, 0, 64*2)
 
 	key := keys[:MacKeyLen]
@@ -288,13 +325,13 @@ func generate_macs(data, keys []byte, versionParams VersionParams) []byte {
 	res = mac.Sum(res)
 
 	key = keys[MacKeyLen:]
-	var digestmod_fn func() hash.Hash
+	var digestmodFn func() hash.Hash
 	if versionParams.UseKeccakOverSHA3 {
-		digestmod_fn = sha3.NewLegacyKeccak512
+		digestmodFn = sha3.NewLegacyKeccak512
 	} else {
-		digestmod_fn = sha3.New512
+		digestmodFn = sha3.New512
 	}
-	mac = hmac.New(digestmod_fn, key)
+	mac = hmac.New(digestmodFn, key)
 	mac.Write(data)
 	res = mac.Sum(res)
 
@@ -318,9 +355,9 @@ func (c *Cipher) Decrypt(src []byte) (res []byte, err error) {
 		return
 	}
 
-	v_b := bytes.NewBuffer(src[len(MagicBytes) : len(MagicBytes)+VersionBytesLen])
+	vB := bytes.NewBuffer(src[len(MagicBytes) : len(MagicBytes)+VersionBytesLen])
 	var version Version
-	err = binary.Read(v_b, binary.BigEndian, &version)
+	err = binary.Read(vB, binary.BigEndian, &version)
 	if err != nil {
 		err = CorruptionError{err.Error()}
 		return
@@ -350,14 +387,14 @@ func (c *Cipher) Decrypt(src []byte) (res []byte, err error) {
 	authenticatedData = append(authenticatedData, src[:24]...)
 	authenticatedData = append(authenticatedData, encryptedData...)
 
-	if !hmac.Equal(macs, generate_macs(authenticatedData, macKeys, versionParams)) {
+	if !hmac.Equal(macs, generateMACs(authenticatedData, macKeys, versionParams)) {
 		err = BadPassphraseError{}
 		return
 	}
 
 	dst := make([]byte, len(src)-versionParams.Overhead())
 
-	err = decrypt_data(dst, encryptedData, cipherKeys, versionParams)
+	err = decryptData(dst, encryptedData, cipherKeys, versionParams)
 	if err != nil {
 		return
 	}
@@ -365,7 +402,7 @@ func (c *Cipher) Decrypt(src []byte) (res []byte, err error) {
 	return dst, nil
 }
 
-func decrypt_data(dst, data, keys []byte, versionParams VersionParams) error {
+func decryptData(dst, data, keys []byte, versionParams VersionParams) error {
 	var iv, key []byte
 	var block cipher.Block
 	var stream cipher.Stream
@@ -373,11 +410,11 @@ func decrypt_data(dst, data, keys []byte, versionParams VersionParams) error {
 
 	buffer := append([]byte{}, data...)
 
-	iv_offset := 0
+	ivOffset := 0
 	cipherOffset := 0
 
-	iv_offset += AESIVLen
-	iv = buffer[:iv_offset]
+	ivOffset += AESIVLen
+	iv = buffer[:ivOffset]
 	key = keys[cipherOffset : cipherOffset+CipherKeyLen]
 	cipherOffset += CipherKeyLen
 	block, err = aes.NewCipher(key)
@@ -385,11 +422,11 @@ func decrypt_data(dst, data, keys []byte, versionParams VersionParams) error {
 		return err
 	}
 	stream = cipher.NewCTR(block, iv)
-	stream.XORKeyStream(buffer[iv_offset:], buffer[iv_offset:])
+	stream.XORKeyStream(buffer[ivOffset:], buffer[ivOffset:])
 
 	if versionParams.UseTwofish {
-		iv_offset += TwofishIVLen
-		iv = buffer[iv_offset-TwofishIVLen : iv_offset]
+		ivOffset += TwofishIVLen
+		iv = buffer[ivOffset-TwofishIVLen : ivOffset]
 		key = keys[cipherOffset : cipherOffset+CipherKeyLen]
 		cipherOffset += CipherKeyLen
 		block, err = twofish.NewCipher(key)
@@ -397,16 +434,16 @@ func decrypt_data(dst, data, keys []byte, versionParams VersionParams) error {
 			return err
 		}
 		stream = cipher.NewCTR(block, iv)
-		stream.XORKeyStream(buffer[iv_offset:], buffer[iv_offset:])
+		stream.XORKeyStream(buffer[ivOffset:], buffer[ivOffset:])
 	}
 
-	iv_offset += SalsaIVLen
-	iv = buffer[iv_offset-SalsaIVLen : iv_offset]
-	key_array := new([32]byte)
-	copy(key_array[:], keys[cipherOffset:cipherOffset+CipherKeyLen])
-	salsa20.XORKeyStream(dst, buffer[iv_offset:], iv, key_array)
+	ivOffset += SalsaIVLen
+	iv = buffer[ivOffset-SalsaIVLen : ivOffset]
+	keyArray := new([32]byte)
+	copy(keyArray[:], keys[cipherOffset:cipherOffset+CipherKeyLen])
+	salsa20.XORKeyStream(dst, buffer[ivOffset:], iv, keyArray)
 
-	if len(buffer[iv_offset:]) != len(data)-versionParams.TotalIVLen {
+	if len(buffer[ivOffset:]) != len(data)-versionParams.TotalIVLen {
 		return CorruptionError{"something went terribly wrong during decryption: buffer size is wrong"}
 	}
 
