@@ -263,3 +263,24 @@ func TestSpec(t *testing.T) {
 		}
 	}
 }
+
+func TestRandomness(t *testing.T) {
+	for _, version := range []Version{3, 4} {
+		key := []byte("YELLOW_SUBMARINE")
+		cipher, _ := NewCipher(key, nil, version)
+		pt := []byte("foobar")
+		once, _ := cipher.Encrypt(pt)
+		twice, _ := cipher.Encrypt(pt)
+		onceHex := hex.EncodeToString(once)
+		twiceHex := hex.EncodeToString(twice)
+		if onceHex == twiceHex {
+			t.Errorf("got same encryption twice in a row")
+		}
+		cipher, _ = NewCipher(key, nil, version)
+		thrice, _ := cipher.Encrypt(pt)
+		thriceHex := hex.EncodeToString(thrice)
+		if onceHex == thriceHex || twiceHex == thriceHex {
+			t.Errorf("got same encryption twice after making cipher again")
+		}
+	}
+}
