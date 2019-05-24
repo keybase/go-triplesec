@@ -5,7 +5,7 @@ script:
     # staticcheck only works for two newest go versions
     - if [[ "$(go version)" =~ go1.1[12] ]]; then go get honnef.co/go/tools/cmd/staticcheck && staticcheck ./... && echo "staticcheck complete"; fi
     - go vet ./...
-    - go test -tags "alltests" -run Suite -coverprofile coverage.txt github.com/keybase/go-triplesec
+    - go test ./...
 
 go:
     - 1.9.x
