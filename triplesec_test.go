@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"os"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func testCycle(t *testing.T, version Version) {
@@ -250,7 +252,8 @@ func TestSpec(t *testing.T) {
 
 		var vs testVectors
 		dec := json.NewDecoder(handle)
-		dec.Decode(&vs)
+		err := dec.Decode(&vs)
+		require.NoError(t, err)
 
 		for _, v := range vs.Vectors {
 			key, _ := hex.DecodeString(v.Key)
