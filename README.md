@@ -1,7 +1,6 @@
-TripleSec
-=========
+# TripleSec
 
-[![Travis CI](https://travis-ci.org/keybase/go-triplesec.svg?branch=master)](https://travis-ci.org/keybase/go-triplesec)
+[![Build Status](https://github.com/keybase/go-triplesec/actions/workflows/ci.yml/badge.svg)](https://github.com/keybase/go-triplesec/actions)
 
 Golang implementation of the layered encryption scheme TripleSec
 
