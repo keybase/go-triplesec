@@ -5,7 +5,7 @@ go 1.21
 require (
 	github.com/keybase/go-crypto v0.0.0-20200123153347-de78d2cb44f4
 	github.com/stretchr/testify v1.10.0
-	golang.org/x/crypto v0.16.0
+	golang.org/x/crypto v0.32.0
 )
 
 require (
