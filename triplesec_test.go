@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -201,7 +202,7 @@ func TestBadPwV3(t *testing.T) {
 	_, err := c.Decrypt(ciphertext)
 	if err == nil {
 		t.Error("needed an error on bad PW")
-	} else if _, ok := err.(BadPassphraseError); !ok {
+	} else if !errors.As(err, new(BadPassphraseError)) {
 		t.Error("got wrong type of error")
 	}
 }
@@ -229,7 +230,7 @@ func TestBadPwV4(t *testing.T) {
 	_, err := c.Decrypt(ciphertext)
 	if err == nil {
 		t.Error("needed an error on bad PW")
-	} else if _, ok := err.(BadPassphraseError); !ok {
+	} else if !errors.As(err, new(BadPassphraseError)) {
 		t.Error("got wrong type of error")
 	}
 }

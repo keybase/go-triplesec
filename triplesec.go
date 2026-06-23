@@ -308,7 +308,7 @@ func encryptData(plain, keys []byte, rng RandomnessGenerator, versionParams Vers
 	ivOffset -= len(aesIV)
 
 	if ivOffset != 0 {
-		return nil, CorruptionError{"something went terribly wrong during encryption: ivOffset final value non-zero"}
+		return nil, CorruptionError{msg: "something went terribly wrong during encryption: ivOffset final value non-zero"}
 	}
 
 	return res, nil
@@ -344,12 +344,12 @@ func generateMACs(data, keys []byte, versionParams VersionParams) []byte {
 // authentication fails or on memory failures.
 func (c *Cipher) Decrypt(src []byte) (res []byte, err error) {
 	if len(src) < len(MagicBytes)+VersionBytesLen {
-		err = CorruptionError{"decryption underrun"}
+		err = CorruptionError{msg: "decryption underrun"}
 		return
 	}
 
 	if !bytes.Equal(src[:len(MagicBytes)], MagicBytes[0:]) {
-		err = CorruptionError{"wrong magic bytes"}
+		err = CorruptionError{msg: "wrong magic bytes"}
 		return
 	}
 
@@ -357,7 +357,7 @@ func (c *Cipher) Decrypt(src []byte) (res []byte, err error) {
 	var version Version
 	err = binary.Read(vB, binary.BigEndian, &version)
 	if err != nil {
-		err = CorruptionError{err.Error()}
+		err = CorruptionError{msg: err.Error(), err: err}
 		return
 	}
 
@@ -442,7 +442,7 @@ func decryptData(dst, data, keys []byte, versionParams VersionParams) error {
 	salsa20.XORKeyStream(dst, buffer[ivOffset:], iv, keyArray)
 
 	if len(buffer[ivOffset:]) != len(data)-versionParams.TotalIVLen {
-		return CorruptionError{"something went terribly wrong during decryption: buffer size is wrong"}
+		return CorruptionError{msg: "something went terribly wrong during decryption: buffer size is wrong"}
 	}
 
 	return nil

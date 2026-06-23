@@ -6,10 +6,15 @@ import (
 
 type CorruptionError struct {
 	msg string
+	err error
 }
 
 func (e CorruptionError) Error() string {
 	return "Triplesec corruption: " + e.msg
+}
+
+func (e CorruptionError) Unwrap() error {
+	return e.err
 }
 
 type VersionError struct {
