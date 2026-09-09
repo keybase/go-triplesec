@@ -53,7 +53,7 @@ func TestDecryptAllInvalidLengths(t *testing.T) {
 		require.NoError(t, err)
 
 		// Test every invalid length with valid magic + version
-		for length := 0; length < minValid; length++ {
+		for length := range minValid {
 			data := make([]byte, length)
 			if length >= 4 {
 				copy(data, MagicBytes[:])
@@ -101,7 +101,7 @@ func TestCacheInvalidationEdgeCases(t *testing.T) {
 	require.Nil(t, c.derivedKey)
 
 	// Test 3: Multiple salt changes
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		salt := bytes.Repeat([]byte{byte(i)}, SaltLen)
 		err = c.SetSalt(salt)
 		require.NoError(t, err, "iteration %d", i)
@@ -214,7 +214,7 @@ func TestCrossVersionDecryptionWithDifferentSalts(t *testing.T) {
 		require.Equal(t, plaintext, result)
 
 		// Decrypt multiple times (cache should work correctly)
-		for i := 0; i < 3; i++ {
+		for i := range 3 {
 			result, err = c4.Decrypt(ct3)
 			require.NoError(t, err, "round %d", i)
 			require.Equal(t, plaintext, result, "round %d", i)
