@@ -4,6 +4,7 @@ package triplesec
 import (
 	"bytes"
 	"encoding/hex"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -23,7 +24,7 @@ func TestIssue1_AllInvalidLengths(t *testing.T) {
 	require.Error(t, err)
 
 	// Test every length from 0 to Overhead-1
-	for length := 0; length < minValid; length++ {
+	for length := range minValid {
 		testData := make([]byte, length)
 		// Set valid magic bytes if there's room
 		if length >= 4 {
@@ -183,8 +184,8 @@ func TestIssue2_MultipleCycles(t *testing.T) {
 	}
 
 	// Decrypt all messages in reverse order (different salt order)
-	for i := len(ciphertexts) - 1; i >= 0; i-- {
-		result, err := c.Decrypt(ciphertexts[i])
+	for i, ciphertext := range slices.Backward(ciphertexts) {
+		result, err := c.Decrypt(ciphertext)
 		require.NoError(t, err, "decrypt %d", i)
 		require.Equal(t, plaintexts[i], result, "decrypt %d", i)
 	}
@@ -286,7 +287,7 @@ func TestIssue4_ScrubInvocation(t *testing.T) {
 	require.NoError(t, err)
 
 	// Multiple encrypt/decrypt cycles to ensure defer scrub works each time
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		ciphertext, err := c.Encrypt(plaintext)
 		require.NoError(t, err, "encrypt cycle %d", i)
 
@@ -318,7 +319,7 @@ func TestSeparateCipherInstances(t *testing.T) {
 
 	// Create multiple ciphertexts
 	var ciphertexts [][]byte
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		ct, err := c.Encrypt(plaintext)
 		require.NoError(t, err)
 		ciphertexts = append(ciphertexts, ct)
